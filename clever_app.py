@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Clever Cloud Entry Point - Direct Import to Fixed App
-Maximum reliability with zero dependency fallbacks
+Clever Cloud Entry Point - Import Complete Production API
+Connects to Matrix via etke.cc bridges
 """
 
-# Import the working fixed app directly
-from clever_app_fixed import app
+# Import the complete production API with all endpoints
+from src.api_etke_prod import app
 
 # Re-export for uvicorn
 __all__ = ['app']
