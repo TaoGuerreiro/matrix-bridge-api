@@ -21,6 +21,8 @@ import uvicorn
 from .etke_matrix_client_prod import ProductionMatrixClient
 
 # Configuration Loguru
+# Create logs directory if it doesn't exist
+os.makedirs("logs", exist_ok=True)
 logger.add("logs/api_prod.log", rotation="100 MB", level="INFO")
 
 # Charger les variables d'environnement
@@ -104,9 +106,6 @@ async def lifespan(app: FastAPI):
     # Initialiser le client Matrix
     try:
         matrix_client = ProductionMatrixClient(
-            homeserver=ETKE_HOMESERVER,
-            username=ETKE_USERNAME,
-            password=ETKE_PASSWORD,
             use_postgres=USE_POSTGRES,
             pg_config=pg_config if USE_POSTGRES else None
         )
@@ -332,7 +331,7 @@ async def messenger_webhook(data: Dict[Any, Any]):
 if __name__ == "__main__":
     logger.info(f"🚀 Starting API server on {API_HOST}:{API_PORT}")
     uvicorn.run(
-        "api_etke_prod:app",
+        "src.api_etke_prod:app",
         host=API_HOST,
         port=API_PORT,
         reload=False,  # Pas de reload en production

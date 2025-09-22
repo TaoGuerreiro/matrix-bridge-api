@@ -20,7 +20,7 @@ from nio import (
 from loguru import logger
 from dotenv import load_dotenv
 
-from postgres_matrix_store import PostgresMatrixStore
+from .postgres_matrix_store import PostgresMatrixStore
 
 load_dotenv()
 

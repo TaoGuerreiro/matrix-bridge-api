@@ -8,6 +8,6 @@
     "python_version": "3.11"
   },
   "hooks": {
-    "postDeploy": "python src/fix_encryption_postgres.py"
+    "postDeploy": "python src/fix_encryption.py"
   }
 }
