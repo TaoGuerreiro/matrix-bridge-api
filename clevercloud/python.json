@@ -6,5 +6,14 @@
   "build": {
     "type": "python",
     "python_version": "3.11"
-  }
+  },
+  "hooks": {
+    "postDeploy": ""
+  },
+  "apps": [
+    {
+      "name": "default",
+      "module": "app:app"
+    }
+  ]
 }
