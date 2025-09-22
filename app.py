@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
 Entry point for Clever Cloud deployment
-Resolves import issues by using the fixed application
+Imports the complete Matrix Bridge API with all endpoints
 """
 
-# Import the working fixed app
-from clever_app_fixed import app
+# Import the complete API with all endpoints
+from src.api_etke_prod import app
 
 # This makes the app available for uvicorn
 # Usage: uvicorn app:app
