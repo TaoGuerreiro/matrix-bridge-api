@@ -16,17 +16,13 @@ from psycopg2.extras import RealDictCursor, Json
 from psycopg2.pool import ThreadedConnectionPool
 from contextlib import contextmanager
 
-from nio.store import MatrixStore
-from nio.store.models import (
-    Accounts, OlmSessions, MegolmInboundSessions,
-    DeviceKeys, EncryptedRooms, OutgoingKeyRequests,
-    ForwardedChains, Keys
-)
+# Remove nio.store imports as they don't exist in current nio version
+# We'll implement our own store interface
 
 logger = logging.getLogger(__name__)
 
 
-class PostgresMatrixStore(MatrixStore):
+class PostgresMatrixStore:
     """
     Store PostgreSQL production-ready pour Matrix encryption
     Gère la persistance complète des clés de chiffrement
