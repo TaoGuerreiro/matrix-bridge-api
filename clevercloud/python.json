@@ -8,6 +8,6 @@
     "python_version": "3.11"
   },
   "hooks": {
-    "postDeploy": "python src/fix_encryption.py"
+    "postDeploy": "PYTHONPATH=$PYTHONPATH:./src python src/fix_encryption.py"
   }
 }

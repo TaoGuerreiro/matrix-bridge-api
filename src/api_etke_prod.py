@@ -18,7 +18,14 @@ from dotenv import load_dotenv
 import uvicorn
 
 # Import du client Matrix production
-from .etke_matrix_client_prod import ProductionMatrixClient
+try:
+    from .etke_matrix_client_prod import ProductionMatrixClient
+except ImportError:
+    # Fallback for Clever Cloud deployment
+    import sys
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from etke_matrix_client_prod import ProductionMatrixClient
 
 # Configuration Loguru
 # Create logs directory if it doesn't exist
@@ -331,7 +338,7 @@ async def messenger_webhook(data: Dict[Any, Any]):
 if __name__ == "__main__":
     logger.info(f"🚀 Starting API server on {API_HOST}:{API_PORT}")
     uvicorn.run(
-        "src.api_etke_prod:app",
+        app,  # Direct app reference instead of string
         host=API_HOST,
         port=API_PORT,
         reload=False,  # Pas de reload en production

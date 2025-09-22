@@ -20,7 +20,14 @@ from nio import (
 from loguru import logger
 from dotenv import load_dotenv
 
-from .postgres_matrix_store import PostgresMatrixStore
+try:
+    from .postgres_matrix_store import PostgresMatrixStore
+except ImportError:
+    # Fallback for Clever Cloud deployment
+    import sys
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from postgres_matrix_store import PostgresMatrixStore
 
 load_dotenv()
 
@@ -69,6 +76,7 @@ class ProductionMatrixClient:
         self.messenger_rooms: Dict[str, str] = {}
         self.message_callbacks = []
         self.sync_task = None
+        self.webhook_url: Optional[str] = None
 
         logger.info(f"ProductionMatrixClient initialized (PostgreSQL: {self.use_postgres})")
 
@@ -93,14 +101,20 @@ class ProductionMatrixClient:
                 self.access_token = response.access_token
                 logger.info(f"✅ Connected to etke.cc as {self.user_id}")
 
-                # Charger le store de chiffrement
-                await self._load_encryption_store()
+                # Load encryption store if available
+                try:
+                    await self._load_encryption_store()
+                except Exception as e:
+                    logger.warning(f"Could not load encryption store: {e}")
 
                 # Synchronisation initiale
                 await self._initial_sync()
 
                 # Configuration du chiffrement
-                await self._setup_encryption()
+                try:
+                    await self._setup_encryption()
+                except Exception as e:
+                    logger.warning(f"Could not setup encryption: {e}")
 
                 return True
             else:
@@ -504,3 +518,99 @@ class ProductionMatrixClient:
             logger.error(f"Failed to get room messages: {e}")
 
         return messages
+
+    # Additional methods required by the API
+
+    async def start(self):
+        """Start the Matrix client and connect"""
+        return await self.connect()
+
+    async def stop(self):
+        """Stop the Matrix client"""
+        await self.close()
+
+    async def setup_webhook(self, webhook_url: str):
+        """Setup webhook URL for external notifications"""
+        self.webhook_url = webhook_url
+        logger.info(f"Webhook configured: {webhook_url}")
+
+    async def get_platform_messages(self, platform: str, limit: int = 50) -> List[Dict]:
+        """Get messages from a specific platform (Instagram/Messenger)"""
+        messages = []
+
+        if platform == "instagram":
+            rooms = self.instagram_rooms
+        elif platform == "messenger":
+            rooms = self.messenger_rooms
+        else:
+            return messages
+
+        for room_id in rooms.keys():
+            try:
+                room_messages = await self.get_room_messages(room_id, limit // len(rooms) if rooms else limit)
+                for msg in room_messages:
+                    msg['platform'] = platform
+                    msg['room_id'] = room_id
+                messages.extend(room_messages)
+            except Exception as e:
+                logger.error(f"Failed to get messages from {room_id}: {e}")
+
+        # Sort by timestamp and limit
+        messages.sort(key=lambda x: x.get('timestamp', 0), reverse=True)
+        return messages[:limit]
+
+    async def get_rooms_list(self) -> List[Dict]:
+        """Get list of all rooms with metadata"""
+        rooms = []
+
+        for room_id, room_name in self.instagram_rooms.items():
+            rooms.append({
+                'room_id': room_id,
+                'name': room_name,
+                'platform': 'instagram',
+                'encrypted': self.client.rooms.get(room_id, {}).encrypted if self.client else False
+            })
+
+        for room_id, room_name in self.messenger_rooms.items():
+            rooms.append({
+                'room_id': room_id,
+                'name': room_name,
+                'platform': 'messenger',
+                'encrypted': self.client.rooms.get(room_id, {}).encrypted if self.client else False
+            })
+
+        return rooms
+
+    async def sync_once(self):
+        """Perform a single sync operation"""
+        if self.client:
+            await self.client.sync(timeout=10000)
+
+    async def get_encryption_status(self) -> Dict:
+        """Get encryption status information"""
+        if not self.client:
+            return {'status': 'disconnected'}
+
+        olm_available = hasattr(self.client, 'olm') and self.client.olm
+
+        return {
+            'status': 'connected' if self.client.logged_in else 'disconnected',
+            'olm_available': olm_available,
+            'device_id': self.device_id,
+            'user_id': self.user_id,
+            'postgres_store': self.use_postgres,
+            'rooms_encrypted': sum(1 for room in self.client.rooms.values() if room.encrypted) if self.client else 0
+        }
+
+    async def fix_encryption(self):
+        """Fix encryption issues in background"""
+        logger.info("Starting encryption fix...")
+        try:
+            if self.client:
+                # Re-setup encryption
+                await self.client.keys_query()
+                await self._setup_encryption()
+                logger.info("Encryption fix completed")
+        except Exception as e:
+            logger.error(f"Encryption fix failed: {e}")
+
