@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+build/
+dist/
+*.egg-info/
+
+# Environment
+.env
+.env.*
+!.env.example
+!.env.etke
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Config folder (permissions issues)
+config/
+
+# Matrix stores
+*.db
+*.db-shm
+*.db-wal
+etke_store.db*
+matrix_store.db*
+matrix_store/
+crypto_store/
+
+# Test files
+test_*.db
+*.test
+
+# Backups
+backup_*.sql
+*.backup
+
+# Temporary
+*.tmp
+temp/
+tmp/
+
+# Clever Cloud (local config only)
+.clever.json.local

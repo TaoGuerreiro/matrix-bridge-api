@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  postgres-test:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: matrix_store_test
+      POSTGRES_USER: matrix_user
+      POSTGRES_PASSWORD: test_password_2024
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+      - ./init-test-db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U matrix_user -d matrix_store_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - test_network
+
+  test-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    environment:
+      POSTGRES_DB: matrix_store_test
+      POSTGRES_HOST: postgres-test
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: matrix_user
+      POSTGRES_PASSWORD: test_password_2024
+      USE_POSTGRES_STORE: "true"
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src
+      - ./logs:/app/logs
+    networks:
+      - test_network
+    command: ["python", "src/test_postgres_persistence.py"]
+
+volumes:
+  postgres_test_data:
+
+networks:
+  test_network:
+    driver: bridge

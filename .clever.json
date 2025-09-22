@@ -1,0 +1,11 @@
+{
+  "apps": [
+    {
+      "app_id": "app_CHANGEME",
+      "org_id": "orga_chalky",
+      "deploy_url": "git+ssh://git@push-n2-par-clevercloud-customers.services.clever-cloud.com/app_CHANGEME.git",
+      "name": "matrix-bridge-api",
+      "alias": "matrix-bridge-api"
+    }
+  ]
+}

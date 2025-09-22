@@ -1,0 +1,13 @@
+{
+  "deploy": {
+    "appIsGoingSleep": false,
+    "deploymentsToKeep": 3
+  },
+  "build": {
+    "type": "python",
+    "python_version": "3.11"
+  },
+  "hooks": {
+    "postDeploy": "python src/fix_encryption_postgres.py"
+  }
+}

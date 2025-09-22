@@ -1,0 +1,506 @@
+#!/usr/bin/env python3
+"""
+Client Matrix Production avec PostgreSQL
+Utilise PostgreSQL pour la persistance des clés de chiffrement
+"""
+import os
+import asyncio
+from typing import Optional, Dict, List, Any
+from pathlib import Path
+
+from nio import (
+    AsyncClient,
+    AsyncClientConfig,
+    LoginResponse,
+    RoomMessageText,
+    MegolmEvent,
+    MessageDirection,
+    RoomEncryptedMessage
+)
+from loguru import logger
+from dotenv import load_dotenv
+
+from postgres_matrix_store import PostgresMatrixStore
+
+load_dotenv()
+
+
+class ProductionMatrixClient:
+    """Client Matrix production-ready avec persistance PostgreSQL"""
+
+    def __init__(
+        self,
+        use_postgres: bool = True,
+        pg_config: Dict[str, Any] = None
+    ):
+        """
+        Initialise le client Matrix avec support PostgreSQL ou SQLite
+
+        Args:
+            use_postgres: Utiliser PostgreSQL (True) ou SQLite (False)
+            pg_config: Configuration PostgreSQL
+        """
+        # Configuration Matrix
+        self.homeserver = os.getenv("ETKE_HOMESERVER", "https://matrix.chalky.etke.host")
+        self.username = os.getenv("ETKE_USERNAME", "@florent:chalky.etke.host")
+        self.password = os.getenv("ETKE_PASSWORD")
+        self.device_id = "BEEPER_API_CLIENT"
+
+        # Configuration du store
+        self.use_postgres = use_postgres and os.getenv("USE_POSTGRES_STORE", "false").lower() == "true"
+
+        # Configuration PostgreSQL par défaut
+        self.pg_config = pg_config or {
+            'database': os.getenv('POSTGRES_DB', 'matrix_store'),
+            'host': os.getenv('POSTGRES_HOST', 'localhost'),
+            'port': int(os.getenv('POSTGRES_PORT', 5432)),
+            'user': os.getenv('POSTGRES_USER', 'matrix_user'),
+            'password': os.getenv('POSTGRES_PASSWORD'),
+            'pool_size': int(os.getenv('POSTGRES_POOL_SIZE', 20))
+        }
+
+        self.client: Optional[AsyncClient] = None
+        self.store = None
+        self.user_id: Optional[str] = None
+        self.access_token: Optional[str] = None
+
+        # Rooms tracking
+        self.instagram_rooms: Dict[str, str] = {}
+        self.messenger_rooms: Dict[str, str] = {}
+        self.message_callbacks = []
+        self.sync_task = None
+
+        logger.info(f"ProductionMatrixClient initialized (PostgreSQL: {self.use_postgres})")
+
+    async def connect(self) -> bool:
+        """Se connecter au serveur Matrix avec le bon store"""
+        try:
+            if self.use_postgres:
+                logger.info("🐘 Using PostgreSQL store for production")
+                await self._connect_with_postgres()
+            else:
+                logger.info("📁 Using SQLite store for development")
+                await self._connect_with_sqlite()
+
+            # Login
+            response = await self.client.login(
+                password=self.password,
+                device_name=self.device_id
+            )
+
+            if isinstance(response, LoginResponse):
+                self.user_id = response.user_id
+                self.access_token = response.access_token
+                logger.info(f"✅ Connected to etke.cc as {self.user_id}")
+
+                # Charger le store de chiffrement
+                await self._load_encryption_store()
+
+                # Synchronisation initiale
+                await self._initial_sync()
+
+                # Configuration du chiffrement
+                await self._setup_encryption()
+
+                return True
+            else:
+                logger.error(f"❌ Login failed: {response}")
+                return False
+
+        except Exception as e:
+            logger.error(f"❌ Connection error: {e}")
+            return False
+
+    async def _connect_with_postgres(self):
+        """Connexion avec store PostgreSQL"""
+        # Créer le store PostgreSQL
+        self.store = PostgresMatrixStore(
+            user_id=self.username,
+            device_id=self.device_id,
+            pickle_key="encryption_key_for_etke",
+            **self.pg_config
+        )
+
+        # Configuration du client avec chiffrement
+        config = AsyncClientConfig(
+            store_sync_tokens=True,
+            encryption_enabled=True
+        )
+
+        # Créer le client avec le store custom
+        self.client = AsyncClient(
+            homeserver=self.homeserver,
+            user=self.username,
+            device_id=self.device_id,
+            config=config,
+            store=self.store  # Store PostgreSQL
+        )
+
+        logger.info("PostgreSQL store configured successfully")
+
+    async def _connect_with_sqlite(self):
+        """Connexion avec store SQLite (fallback)"""
+        store_path = Path("matrix_store")
+        store_path.mkdir(exist_ok=True)
+
+        config = AsyncClientConfig(
+            store_sync_tokens=True,
+            encryption_enabled=True,
+            pickle_key="encryption_key_for_etke",
+            store_name="etke_store.db"
+        )
+
+        self.client = AsyncClient(
+            homeserver=self.homeserver,
+            user=self.username,
+            device_id=self.device_id,
+            store_path=str(store_path),
+            config=config
+        )
+
+        logger.info("SQLite store configured successfully")
+
+    async def _load_encryption_store(self):
+        """Charge le store de chiffrement (PostgreSQL ou SQLite)"""
+        try:
+            if self.use_postgres:
+                # Charger depuis PostgreSQL
+                account = self.store.load_account()
+                if account:
+                    logger.info("🔐 Loaded Olm account from PostgreSQL")
+                    # Restaurer l'account dans le client nio
+                    if hasattr(self.client, 'olm') and self.client.olm:
+                        self.client.olm.account = account
+
+                # Charger les sessions Megolm
+                sessions = self.store.load_inbound_group_sessions()
+                logger.info(f"🔑 Loaded {len(sessions)} Megolm sessions from PostgreSQL")
+
+                # Charger les device keys
+                device_keys = self.store.load_device_keys()
+                logger.info(f"📱 Loaded device keys for {len(device_keys)} users")
+
+            else:
+                # SQLite - utiliser la méthode nio standard
+                self.client.load_store()
+                logger.info("🔐 Encryption store loaded from SQLite")
+
+            # Vérifier que les clés Olm sont chargées
+            if hasattr(self.client, 'olm') and self.client.olm:
+                logger.info("🔑 Olm encryption keys are available")
+            else:
+                logger.warning("⚠️ Olm encryption keys not loaded yet")
+
+        except Exception as e:
+            logger.error(f"❌ Failed to load encryption store: {e}")
+
+    async def _initial_sync(self):
+        """Synchronisation initiale pour récupérer l'état"""
+        logger.info("🔄 Initial sync...")
+        sync_response = await self.client.sync(timeout=30000, full_state=True)
+
+        # Sauvegarder le token de sync
+        if self.use_postgres and sync_response.next_batch:
+            self.store.save_sync_token(sync_response.next_batch)
+
+        # Parser les rooms Instagram/Messenger
+        for room_id, room in self.client.rooms.items():
+            room_name = room.display_name or ""
+
+            if "instagram" in room_name.lower() or "(ig)" in room_name.lower():
+                self.instagram_rooms[room_id] = room_name
+                logger.info(f"📷 Found Instagram room: {room_name}")
+
+            elif "messenger" in room_name.lower() or "facebook" in room_name.lower():
+                self.messenger_rooms[room_id] = room_name
+                logger.info(f"💬 Found Messenger room: {room_name}")
+
+        logger.info(f"🔗 Total found: {len(self.instagram_rooms)} Instagram, {len(self.messenger_rooms)} Messenger")
+
+    async def _setup_encryption(self):
+        """Configure le chiffrement et partage les clés"""
+        logger.info("🔐 Setting up encryption...")
+
+        # Télécharger les clés des autres devices
+        await self.client.keys_query()
+
+        # Partager les clés pour toutes les rooms chiffrées
+        shared_count = 0
+        for room_id in self.client.rooms:
+            room = self.client.rooms[room_id]
+            if room.encrypted:
+                try:
+                    await self.client.share_group_session(
+                        room_id,
+                        ignore_unverified_devices=True
+                    )
+                    shared_count += 1
+                except Exception as e:
+                    logger.warning(f"Could not share keys for {room_id}: {e}")
+
+        logger.info(f"📊 Shared keys for {shared_count} encrypted rooms")
+
+        # Marquer les devices des bridges comme trustés
+        await self._trust_bridge_devices()
+
+    async def _trust_bridge_devices(self):
+        """Fait automatiquement confiance aux devices des bridges"""
+        bridge_users = set()
+
+        # Identifier les utilisateurs bridges
+        for room_id in list(self.instagram_rooms.keys()) + list(self.messenger_rooms.keys()):
+            room = self.client.rooms.get(room_id)
+            if room:
+                for user_id in room.users:
+                    if any(bridge in user_id for bridge in ["instagram", "messenger", "instagrambot", "messengerbot"]):
+                        bridge_users.add(user_id)
+
+        logger.info(f"🌉 Found {len(bridge_users)} bridge users to trust")
+
+        # Faire confiance à leurs devices
+        for user_id in bridge_users:
+            try:
+                devices = self.client.device_store.active_user_devices(user_id)
+                for device in devices.values():
+                    if not device.verified:
+                        self.client.verify_device(device)
+                        logger.debug(f"✅ Trusted device {device.id} for {user_id}")
+
+                        # Sauvegarder en PostgreSQL si activé
+                        if self.use_postgres:
+                            self.store.save_device_keys(
+                                user_id,
+                                device.id,
+                                {'verified': True, 'keys': device.keys}
+                            )
+            except Exception as e:
+                logger.debug(f"Could not verify devices for {user_id}: {e}")
+
+    async def decrypt_event(self, event: MegolmEvent) -> Optional[Dict]:
+        """
+        Déchiffre un événement Megolm
+
+        Args:
+            event: L'événement chiffré
+
+        Returns:
+            Le contenu déchiffré ou None
+        """
+        try:
+            if self.use_postgres:
+                # Chercher la session dans PostgreSQL
+                session = self.store.get_inbound_group_session(
+                    event.room_id,
+                    event.session_id,
+                    event.sender_key
+                )
+
+                if session:
+                    # Utiliser la session pour déchiffrer
+                    decrypted = await self.client.decrypt_event(event)
+                    return decrypted
+
+            else:
+                # Utiliser la méthode standard nio
+                decrypted = await self.client.decrypt_event(event)
+                return decrypted
+
+        except Exception as e:
+            logger.error(f"Failed to decrypt event: {e}")
+            return None
+
+    async def send_message(
+        self,
+        room_id: str,
+        message: str,
+        msgtype: str = "m.text"
+    ) -> bool:
+        """
+        Envoie un message chiffré dans une room
+
+        Args:
+            room_id: ID de la room
+            message: Message à envoyer
+            msgtype: Type de message
+
+        Returns:
+            True si envoyé avec succès
+        """
+        try:
+            room = self.client.rooms.get(room_id)
+            if not room:
+                logger.error(f"Room {room_id} not found")
+                return False
+
+            # Créer le contenu du message
+            content = {
+                "msgtype": msgtype,
+                "body": message
+            }
+
+            # Envoyer (sera automatiquement chiffré si la room est chiffrée)
+            response = await self.client.room_send(
+                room_id=room_id,
+                message_type="m.room.message",
+                content=content
+            )
+
+            if response.event_id:
+                logger.info(f"✅ Message sent to {room_id}: {response.event_id}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Failed to send message: {e}")
+
+        return False
+
+    async def listen_for_messages(self, callback=None):
+        """
+        Écoute les messages en temps réel avec déchiffrement automatique
+
+        Args:
+            callback: Fonction appelée pour chaque message
+        """
+        if callback:
+            self.message_callbacks.append(callback)
+
+        # Callbacks pour les messages
+        @self.client.event
+        async def on_room_message(room, event):
+            # Message texte normal
+            if isinstance(event, RoomMessageText):
+                logger.info(f"📨 Plain message from {event.sender}: {event.body}")
+                for cb in self.message_callbacks:
+                    await cb(room, event)
+
+            # Message chiffré
+            elif isinstance(event, MegolmEvent):
+                logger.info(f"🔐 Encrypted message from {event.sender}")
+
+                # Déchiffrer
+                decrypted = await self.decrypt_event(event)
+                if decrypted:
+                    # Créer un pseudo-event avec le contenu déchiffré
+                    event.body = decrypted.get('content', {}).get('body', '[Decrypted but no body]')
+                    logger.info(f"✅ Decrypted: {event.body}")
+
+                    for cb in self.message_callbacks:
+                        await cb(room, event)
+                else:
+                    logger.warning(f"⚠️ Could not decrypt message from {event.sender}")
+
+        # Démarrer la synchronisation
+        self.sync_task = asyncio.create_task(
+            self.client.sync_forever(timeout=30000, full_state=False)
+        )
+
+        logger.info("⚡ Message listener started with decryption support")
+
+    async def close(self):
+        """Ferme proprement le client et les connexions"""
+        logger.info("🔌 Closing Matrix client...")
+
+        # Arrêter la synchronisation
+        if self.sync_task:
+            self.sync_task.cancel()
+            try:
+                await self.sync_task
+            except asyncio.CancelledError:
+                pass
+
+        # Sauvegarder l'état final en PostgreSQL
+        if self.use_postgres and self.store:
+            if hasattr(self.client, 'olm') and self.client.olm:
+                self.store.save_account(self.client.olm.account)
+                logger.info("💾 Saved final Olm account state to PostgreSQL")
+
+            # Fermer le pool de connexions
+            self.store.close()
+
+        # Fermer le client
+        await self.client.close()
+        logger.info("✅ Matrix client closed successfully")
+
+    # Méthodes utilitaires pour les tests
+
+    async def test_persistence(self) -> bool:
+        """
+        Teste que les clés sont bien persistées et récupérables
+
+        Returns:
+            True si la persistance fonctionne
+        """
+        if not self.use_postgres:
+            logger.warning("Persistence test only works with PostgreSQL")
+            return False
+
+        try:
+            # Sauvegarder l'état actuel
+            if hasattr(self.client, 'olm') and self.client.olm:
+                self.store.save_account(self.client.olm.account)
+
+            # Simuler un redémarrage en rechargeant
+            account = self.store.load_account()
+            sessions = self.store.load_inbound_group_sessions()
+
+            # Vérifier que les données sont présentes
+            if account and len(sessions) > 0:
+                logger.info(f"✅ Persistence test passed: {len(sessions)} sessions recovered")
+                return True
+            else:
+                logger.error("❌ Persistence test failed: No data recovered")
+                return False
+
+        except Exception as e:
+            logger.error(f"❌ Persistence test error: {e}")
+            return False
+
+    async def get_room_messages(
+        self,
+        room_id: str,
+        limit: int = 10
+    ) -> List[Dict]:
+        """
+        Récupère les derniers messages d'une room avec déchiffrement
+
+        Args:
+            room_id: ID de la room
+            limit: Nombre de messages
+
+        Returns:
+            Liste des messages déchiffrés
+        """
+        messages = []
+
+        try:
+            response = await self.client.room_messages(
+                room_id=room_id,
+                start="",
+                limit=limit,
+                direction=MessageDirection.back
+            )
+
+            if hasattr(response, 'chunk'):
+                for event in response.chunk:
+                    if isinstance(event, RoomMessageText):
+                        messages.append({
+                            'sender': event.sender,
+                            'body': event.body,
+                            'timestamp': event.server_timestamp
+                        })
+
+                    elif isinstance(event, MegolmEvent):
+                        decrypted = await self.decrypt_event(event)
+                        if decrypted:
+                            body = decrypted.get('content', {}).get('body', '[No body]')
+                            messages.append({
+                                'sender': event.sender,
+                                'body': body,
+                                'timestamp': event.server_timestamp,
+                                'decrypted': True
+                            })
+
+        except Exception as e:
+            logger.error(f"Failed to get room messages: {e}")
+
+        return messages

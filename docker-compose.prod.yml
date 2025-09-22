@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: matrix_store
+      POSTGRES_USER: matrix_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backup:/backup
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U matrix_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    environment:
+      # Matrix/etke.cc config
+      ETKE_HOMESERVER: ${ETKE_HOMESERVER}
+      ETKE_USERNAME: ${ETKE_USERNAME}
+      ETKE_PASSWORD: ${ETKE_PASSWORD}
+
+      # PostgreSQL pour le store Matrix
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: matrix_store
+      POSTGRES_USER: matrix_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+      # API config
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      USE_POSTGRES_STORE: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    deploy:
+      replicas: 2  # Multi-instance pour haute disponibilité
+
+  # Backup automatique
+  postgres-backup:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: matrix_store
+      POSTGRES_USER: matrix_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./backup:/backup
+    command: |
+      sh -c "while true; do
+        PGPASSWORD=$$POSTGRES_PASSWORD pg_dump -h postgres -U matrix_user matrix_store > /backup/matrix_store_$$(date +%Y%m%d_%H%M%S).sql
+        find /backup -name '*.sql' -mtime +7 -delete
+        sleep 86400
+      done"
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data:
