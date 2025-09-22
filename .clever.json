@@ -1,9 +1,10 @@
 {
   "apps": [
     {
-      "app_id": "app_CHANGEME",
-      "org_id": "orga_chalky",
-      "deploy_url": "git+ssh://git@push-n2-par-clevercloud-customers.services.clever-cloud.com/app_CHANGEME.git",
+      "app_id": "app_c309c7a0-ded6-42e2-9ede-fa724c5a7975",
+      "org_id": "orga_b9885260-4b1f-42b9-879c-f273f69e5385",
+      "deploy_url": "https://push-n3-par-clevercloud-customers.services.clever-cloud.com/app_c309c7a0-ded6-42e2-9ede-fa724c5a7975.git",
+      "git_ssh_url": "git+ssh://git@push-n3-par-clevercloud-customers.services.clever-cloud.com/app_c309c7a0-ded6-42e2-9ede-fa724c5a7975.git",
       "name": "matrix-bridge-api",
       "alias": "matrix-bridge-api"
     }
