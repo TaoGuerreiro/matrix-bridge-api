@@ -39,7 +39,7 @@ ProductionMatrixClient
 
 ```bash
 # Cloner le repository
-git clone https://github.com/chalky-fr/matrix-bridge-api.git
+git clone https://github.com/TaoGuerreiro/matrix-bridge-api.git
 cd matrix-bridge-api
 
 # Créer l'environnement virtuel
