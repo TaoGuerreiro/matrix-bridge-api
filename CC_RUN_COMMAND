@@ -1,1 +1,1 @@
-uvicorn clever_app:app --host 0.0.0.0 --port $PORT
+uvicorn clever_app_fixed:app --host 0.0.0.0 --port $PORT

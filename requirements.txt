@@ -1,11 +1,5 @@
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
-matrix-nio==0.24.0
 python-dotenv==1.0.0
-loguru==0.7.2
-aiofiles==23.2.1
 pydantic==2.4.2
-psycopg2-binary==2.9.9
 httpx==0.25.2
-pytest==7.4.3
-pytest-asyncio==0.21.1
