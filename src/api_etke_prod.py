@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 import uvicorn
 
 # Import du client Matrix production
-from etke_matrix_client_prod import ProductionMatrixClient
+from .etke_matrix_client_prod import ProductionMatrixClient
 
 # Configuration Loguru
 logger.add("logs/api_prod.log", rotation="100 MB", level="INFO")
