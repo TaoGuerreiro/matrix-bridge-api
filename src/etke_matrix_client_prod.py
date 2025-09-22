@@ -14,8 +14,7 @@ from nio import (
     LoginResponse,
     RoomMessageText,
     MegolmEvent,
-    MessageDirection,
-    RoomEncryptedMessage
+    MessageDirection
 )
 from loguru import logger
 from dotenv import load_dotenv
