@@ -15,11 +15,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Add src to path
-src_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'src')
-if src_path not in sys.path:
-    sys.path.insert(0, src_path)
-
 logger.info("🚀 Clever Cloud Matrix Bridge API Starting (Fixed Version)")
 logger.info(f"Working directory: {os.getcwd()}")
 logger.info(f"PORT env: {os.getenv('PORT', 'NOT_SET')}")
@@ -61,38 +56,16 @@ async def startup_event():
     app_status["started_at"] = datetime.datetime.now().isoformat()
     logger.info("✅ FastAPI application started successfully")
 
-    # Try to initialize Matrix client in background
-    try:
-        await initialize_matrix_client()
-    except Exception as e:
-        logger.warning(f"Matrix client initialization failed: {e}")
+    # Check environment variables without importing Matrix client
+    required_vars = ["ETKE_HOMESERVER", "ETKE_USERNAME", "ETKE_PASSWORD"]
+    missing_vars = [var for var in required_vars if not os.getenv(var)]
+
+    if missing_vars:
+        logger.warning(f"Missing Matrix environment variables: {missing_vars}")
         app_status["matrix_connected"] = False
-
-async def initialize_matrix_client():
-    """Initialize Matrix client if possible"""
-    try:
-        # Basic validation of environment variables
-        required_vars = ["ETKE_HOMESERVER", "ETKE_USERNAME", "ETKE_PASSWORD"]
-        missing_vars = [var for var in required_vars if not os.getenv(var)]
-
-        if missing_vars:
-            logger.warning(f"Missing Matrix environment variables: {missing_vars}")
-            return False
-
-        # Try to import and initialize Matrix client
-        try:
-            from etke_matrix_client_prod import ProductionMatrixClient
-            # Don't actually connect yet, just validate imports
-            logger.info("✅ Matrix client imports successful")
-            app_status["matrix_connected"] = True
-            return True
-        except ImportError as e:
-            logger.warning(f"Matrix client import failed: {e}")
-            return False
-
-    except Exception as e:
-        logger.error(f"Matrix client initialization error: {e}")
-        return False
+    else:
+        logger.info("✅ Matrix environment variables present")
+        app_status["matrix_connected"] = True
 
 @app.get("/")
 async def root():
@@ -185,34 +158,21 @@ async def test_endpoint():
         "timestamp": app_status.get("started_at")
     }
 
-# Advanced endpoints (if Matrix is available)
+# Advanced endpoints (placeholders for future Matrix functionality)
 @app.get("/api/v1/rooms")
 async def list_rooms():
-    """List Matrix rooms (if connected)"""
-    if not app_status["matrix_connected"]:
-        return JSONResponse(
-            status_code=503,
-            content={"error": "Matrix client not connected", "status": "service_unavailable"}
-        )
-
-    # Placeholder for actual Matrix functionality
+    """List Matrix rooms (placeholder)"""
     return {
         "rooms": [],
-        "status": "matrix_not_implemented_yet",
+        "status": "placeholder",
         "message": "Matrix integration will be added once basic deployment is stable"
     }
 
 @app.post("/api/v1/send")
 async def send_message():
-    """Send message endpoint (if connected)"""
-    if not app_status["matrix_connected"]:
-        return JSONResponse(
-            status_code=503,
-            content={"error": "Matrix client not connected", "status": "service_unavailable"}
-        )
-
+    """Send message endpoint (placeholder)"""
     return {
-        "status": "not_implemented",
+        "status": "placeholder",
         "message": "Send functionality will be added once deployment is stable"
     }
 
