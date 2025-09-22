@@ -168,6 +168,27 @@ async def root():
         "organization": "Chalky"
     }
 
+@app.get("/health")
+async def health():
+    """Health check endpoint for Clever Cloud"""
+    postgres_status = False
+    if USE_POSTGRES and matrix_client and hasattr(matrix_client, 'store'):
+        try:
+            # Vérifier la connexion PostgreSQL
+            if hasattr(matrix_client.store, 'connection_pool'):
+                postgres_status = True
+        except:
+            pass
+
+    return {
+        "status": "healthy" if matrix_client and matrix_client.client else "degraded",
+        "matrix_connected": bool(matrix_client and matrix_client.client and matrix_client.client.logged_in),
+        "postgres_connected": postgres_status,
+        "webhook_configured": bool(matrix_client and matrix_client.webhook_url),
+        "timestamp": datetime.utcnow().isoformat(),
+        "version": "2.0.0-prod"
+    }
+
 @app.get("/api/v1/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint pour Clever Cloud"""
