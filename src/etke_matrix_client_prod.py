@@ -55,13 +55,13 @@ class ProductionMatrixClient:
         # Configuration du store
         self.use_postgres = use_postgres and os.getenv("USE_POSTGRES_STORE", "false").lower() == "true"
 
-        # Configuration PostgreSQL par défaut
+        # Configuration PostgreSQL par défaut (Clever Cloud variables)
         self.pg_config = pg_config or {
-            'database': os.getenv('POSTGRES_DB', 'matrix_store'),
-            'host': os.getenv('POSTGRES_HOST', 'localhost'),
-            'port': int(os.getenv('POSTGRES_PORT', 5432)),
-            'user': os.getenv('POSTGRES_USER', 'matrix_user'),
-            'password': os.getenv('POSTGRES_PASSWORD'),
+            'database': os.getenv('POSTGRESQL_ADDON_DB', os.getenv('POSTGRES_DB', 'matrix_store')),
+            'host': os.getenv('POSTGRESQL_ADDON_HOST', os.getenv('POSTGRES_HOST', 'localhost')),
+            'port': int(os.getenv('POSTGRESQL_ADDON_PORT', os.getenv('POSTGRES_PORT', 5432))),
+            'user': os.getenv('POSTGRESQL_ADDON_USER', os.getenv('POSTGRES_USER', 'matrix_user')),
+            'password': os.getenv('POSTGRESQL_ADDON_PASSWORD', os.getenv('POSTGRES_PASSWORD')),
             'pool_size': int(os.getenv('POSTGRES_POOL_SIZE', 20))
         }
 
