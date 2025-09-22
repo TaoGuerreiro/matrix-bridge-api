@@ -23,22 +23,7 @@ logger.info(f"Python version: {sys.version}")
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-
-# Create minimal but functional FastAPI app
-app = FastAPI(
-    title="Matrix Bridge API - Clever Cloud",
-    description="Robust Matrix Bridge API for Instagram/Messenger via etke.cc",
-    version="1.0.0"
-)
-
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+from contextlib import asynccontextmanager
 
 # Global state
 app_status = {
@@ -49,8 +34,8 @@ app_status = {
     "matrix_connected": False
 }
 
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app_instance):
     """Initialize the application"""
     import datetime
     app_status["started_at"] = datetime.datetime.now().isoformat()
@@ -66,6 +51,25 @@ async def startup_event():
     else:
         logger.info("✅ Matrix environment variables present")
         app_status["matrix_connected"] = True
+
+    yield
+
+# Create minimal but functional FastAPI app
+app = FastAPI(
+    title="Matrix Bridge API - Clever Cloud",
+    description="Robust Matrix Bridge API for Instagram/Messenger via etke.cc",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/")
 async def root():
