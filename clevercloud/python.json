@@ -6,8 +6,5 @@
   "build": {
     "type": "python",
     "python_version": "3.11"
-  },
-  "hooks": {
-    "postDeploy": "PYTHONPATH=$PYTHONPATH:./src python src/fix_encryption.py"
   }
 }
