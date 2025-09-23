@@ -5,6 +5,7 @@ Utilise PostgreSQL pour la persistance des clés de chiffrement
 """
 import os
 import asyncio
+import base64
 from typing import Optional, Dict, List, Any
 from pathlib import Path
 from datetime import datetime
@@ -897,7 +898,9 @@ class ProductionMatrixClient:
 
             # Sauvegarder l'account Olm
             if hasattr(self.client, 'olm') and self.client.olm:
-                account_pickle = self.client.olm.account.pickle()
+                account_pickle_bytes = self.client.olm.account.pickle()
+                # Convertir bytes en string pour PostgreSQL
+                account_pickle = base64.b64encode(account_pickle_bytes).decode('utf-8')
                 await self.key_store.save_olm_account(self.user_id, account_pickle)
 
             # Sauvegarder les sessions Megolm
