@@ -20,14 +20,12 @@ from loguru import logger
 from dotenv import load_dotenv
 
 try:
-    from .postgres_matrix_store import PostgresMatrixStore
     from .matrix_key_store import PostgreSQLKeyStore
 except ImportError:
     # Fallback for Clever Cloud deployment
     import sys
     import os
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from postgres_matrix_store import PostgresMatrixStore
     from matrix_key_store import PostgreSQLKeyStore
 
 load_dotenv()
@@ -140,14 +138,6 @@ class ProductionMatrixClient:
 
     async def _connect_with_postgres(self):
         """Connexion avec SQLite temporaire + sauvegarde PostgreSQL"""
-        # Créer le store PostgreSQL pour sauvegarder les données
-        self.store = PostgresMatrixStore(
-            user_id=self.username,
-            device_id=self.device_id,
-            pickle_key="encryption_key_for_etke",
-            **self.pg_config
-        )
-
         # Créer le key store PostgreSQL pour les clés de chiffrement
         self.key_store = PostgreSQLKeyStore(self.pg_config)
         self.key_store_available = await self.key_store.init()
@@ -472,8 +462,8 @@ class ProductionMatrixClient:
         if callback:
             self.message_callbacks.append(callback)
 
+        # nio utilise add_event_callback au lieu de @client.event
         # Callback pour détecter de nouvelles rooms lors des syncs
-        @self.client.event
         async def on_sync(response):
             """Callback appelé après chaque sync pour détecter les nouvelles rooms"""
             try:
@@ -505,7 +495,6 @@ class ProductionMatrixClient:
                 logger.error(f"Error in sync callback: {e}")
 
         # Callbacks pour les messages
-        @self.client.event
         async def on_room_message(room, event):
             # Message texte normal
             if isinstance(event, RoomMessageText):
