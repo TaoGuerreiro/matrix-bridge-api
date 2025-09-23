@@ -77,8 +77,8 @@ test_all() {
     local test_message="Test API $(date '+%H:%M:%S') 🤖"
     api_call POST "/send" '{
         "room_id": "!GHTWDcxXouPfkhMVqy:chalky.etke.host",
-        "message": "'"$test_message"'",
-        "platform": "instagram"
+        "content": "'"$test_message"'",
+        "message_type": "m.text"
     }'
 
     print_section "🔄 SYNCHRONISATION"
@@ -126,8 +126,8 @@ send_message() {
 
     api_call POST "/send" '{
         "room_id": "'"$room_id"'",
-        "message": "'"$message"'",
-        "platform": "'"$platform"'"
+        "content": "'"$message"'",
+        "message_type": "m.text"
     }'
 }
 

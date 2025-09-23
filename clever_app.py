@@ -9,10 +9,9 @@ from datetime import datetime
 from typing import Optional, Dict, Any, List
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import httpx
 from loguru import logger
 from dotenv import load_dotenv
 import uvicorn
@@ -295,6 +294,115 @@ async def test_connection():
         success=matrix_client and matrix_client.logged_in,
         message=f"Statut Matrix: {matrix_status}",
         data={"matrix_connected": matrix_client and matrix_client.logged_in}
+    )
+
+@app.get("/api/v1/threads/{platform}", response_model=ApiResponse)
+async def get_threads_by_platform(platform: str):
+    """Récupérer les threads/rooms par plateforme"""
+    global matrix_client
+
+    if not matrix_client or not matrix_client.logged_in:
+        raise HTTPException(status_code=503, detail="Matrix client non connecté")
+
+    try:
+        # Récupérer toutes les rooms et filtrer par plateforme
+        rooms_data = await matrix_client.get_rooms_list()
+        all_rooms = rooms_data['rooms']
+
+        platform_rooms = []
+        for room in all_rooms:
+            if room.get("platform") == platform:
+                platform_rooms.append({
+                    "room_id": room["room_id"],
+                    "name": room["name"],
+                    "platform": room["platform"],
+                    "encrypted": room["encrypted"]
+                })
+
+        return ApiResponse(
+            success=True,
+            message=f"{len(platform_rooms)} threads {platform} trouvés",
+            data={"threads": platform_rooms, "platform": platform}
+        )
+
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération des threads {platform}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/messages/{platform}", response_model=ApiResponse)
+async def get_messages_by_platform(platform: str, limit: int = 10):
+    """Récupérer les messages par plateforme"""
+    global matrix_client
+
+    if not matrix_client or not matrix_client.logged_in:
+        raise HTTPException(status_code=503, detail="Matrix client non connecté")
+
+    try:
+        # Récupérer toutes les rooms et filtrer par plateforme
+        rooms_data = await matrix_client.get_rooms_list()
+        all_rooms = rooms_data['rooms']
+
+        platform_messages = []
+        rooms_checked = 0
+
+        for room in all_rooms:
+            if room.get("platform") == platform and rooms_checked < 3:  # Limiter à 3 rooms pour éviter la surcharge
+                try:
+                    room_messages = await matrix_client.get_room_messages(room["room_id"], limit=5)
+                    for msg in room_messages:
+                        msg["room_name"] = room["name"]
+                        platform_messages.append(msg)
+                    rooms_checked += 1
+                except Exception as e:
+                    logger.warning(f"Erreur pour room {room['room_id']}: {e}")
+                    continue
+
+        # Trier par timestamp et limiter
+        platform_messages.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+        platform_messages = platform_messages[:limit]
+
+        return ApiResponse(
+            success=True,
+            message=f"{len(platform_messages)} messages {platform} trouvés",
+            data={"messages": platform_messages, "platform": platform, "rooms_checked": rooms_checked}
+        )
+
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération des messages {platform}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/sync", response_model=ApiResponse)
+async def sync_messages():
+    """Synchroniser les nouveaux messages"""
+    global matrix_client
+
+    if not matrix_client or not matrix_client.logged_in:
+        raise HTTPException(status_code=503, detail="Matrix client non connecté")
+
+    try:
+        # Effectuer une synchronisation manuelle
+        sync_response = await matrix_client.client.sync(timeout=5000)
+
+        return ApiResponse(
+            success=True,
+            message="Synchronisation effectuée",
+            data={
+                "sync_token": sync_response.next_batch if hasattr(sync_response, 'next_batch') else None,
+                "timestamp": datetime.now().isoformat()
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"Erreur lors de la synchronisation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/webhook/status", response_model=ApiResponse)
+async def webhook_status():
+    """Statut du webhook (non implémenté)"""
+    return ApiResponse(
+        success=True,
+        message="Webhook status",
+        data={"webhook_enabled": False, "webhook_url": None, "note": "Webhook non implémenté"}
     )
 
 # Point d'entrée pour uvicorn
