@@ -287,6 +287,55 @@ async def get_rooms():
         logger.error(f"Failed to get rooms: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/v1/rooms/{room_id}/messages")
+async def get_room_messages(room_id: str, limit: int = 50):
+    """Récupérer les messages d'une room spécifique"""
+    if not matrix_client:
+        raise HTTPException(status_code=503, detail="Matrix client not initialized")
+
+    try:
+        messages = await matrix_client.get_room_messages(room_id, limit)
+
+        # Déterminer la plateforme
+        platform = "unknown"
+        if room_id in matrix_client.instagram_rooms:
+            platform = "instagram"
+        elif room_id in matrix_client.messenger_rooms:
+            platform = "messenger"
+
+        return {
+            "room_id": room_id,
+            "platform": platform,
+            "count": len(messages),
+            "messages": messages
+        }
+    except Exception as e:
+        logger.error(f"Failed to get room messages: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/threads/{platform}/{room_id}/messages")
+async def get_thread_messages(platform: str, room_id: str, limit: int = 50):
+    """Récupérer les messages d'un thread spécifique (compatible avec l'ancienne API)"""
+    if not matrix_client:
+        raise HTTPException(status_code=503, detail="Matrix client not initialized")
+
+    if platform not in ["instagram", "messenger"]:
+        raise HTTPException(status_code=400, detail="Platform must be 'instagram' or 'messenger'")
+
+    try:
+        messages = await matrix_client.get_room_messages(room_id, limit)
+
+        return {
+            "success": True,
+            "room_id": room_id,
+            "platform": platform,
+            "count": len(messages),
+            "messages": messages
+        }
+    except Exception as e:
+        logger.error(f"Failed to get thread messages: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/v1/send")
 async def send_message(request: SendMessageRequest):
     """Envoyer un message"""

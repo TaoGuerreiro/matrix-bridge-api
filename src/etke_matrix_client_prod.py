@@ -708,3 +708,42 @@ class ProductionMatrixClient:
         except Exception as e:
             logger.error(f"Encryption fix failed: {e}")
 
+    async def get_room_messages(self, room_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Récupérer les messages d'une room spécifique"""
+        if not self.client:
+            logger.error("Client not initialized")
+            return []
+
+        messages = []
+        try:
+            # Récupérer l'historique des messages
+            response = await self.client.room_messages(
+                room_id,
+                start="",
+                limit=limit
+            )
+
+            if response and hasattr(response, 'chunk'):
+                for event in response.chunk:
+                    # Traiter les messages texte
+                    if hasattr(event, 'body'):
+                        message_data = {
+                            'id': event.event_id,
+                            'sender': event.sender,
+                            'content': event.body,
+                            'timestamp': datetime.fromtimestamp(event.server_timestamp / 1000).isoformat(),
+                            'room_id': room_id,
+                            'type': 'text',
+                            'decrypted': True
+                        }
+                        messages.append(message_data)
+
+                logger.info(f"📊 Retrieved {len(messages)} messages from room {room_id}")
+            else:
+                logger.warning(f"No messages found in room {room_id}")
+
+        except Exception as e:
+            logger.error(f"Error getting room messages: {e}")
+
+        return messages
+
