@@ -717,33 +717,70 @@ class ProductionMatrixClient:
         messages = []
         try:
             # Récupérer l'historique des messages
+            from nio import RoomMessagesResponse, RoomMessageText, MegolmEvent
+
             response = await self.client.room_messages(
                 room_id,
                 start="",
                 limit=limit
             )
 
-            if response and hasattr(response, 'chunk'):
+            if isinstance(response, RoomMessagesResponse) and response.chunk:
                 for event in response.chunk:
-                    # Traiter les messages texte
-                    if hasattr(event, 'body'):
+                    message_data = None
+
+                    # Messages texte non chiffrés
+                    if isinstance(event, RoomMessageText):
                         message_data = {
                             'id': event.event_id,
                             'sender': event.sender,
                             'content': event.body,
-                            'timestamp': datetime.fromtimestamp(event.server_timestamp / 1000).isoformat(),
+                            'timestamp': datetime.fromtimestamp(event.server_timestamp / 1000).isoformat() if event.server_timestamp else "",
                             'room_id': room_id,
                             'type': 'text',
-                            'decrypted': True
+                            'decrypted': False
                         }
+
+                    # Messages chiffrés
+                    elif isinstance(event, MegolmEvent):
+                        # Essayer de déchiffrer
+                        try:
+                            decrypted = await self.decrypt_event(event)
+                            if decrypted and hasattr(decrypted, 'body'):
+                                message_data = {
+                                    'id': event.event_id,
+                                    'sender': event.sender,
+                                    'content': decrypted.body,
+                                    'timestamp': datetime.fromtimestamp(event.server_timestamp / 1000).isoformat() if event.server_timestamp else "",
+                                    'room_id': room_id,
+                                    'type': 'text',
+                                    'decrypted': True
+                                }
+                        except Exception as decrypt_error:
+                            logger.debug(f"Could not decrypt message: {decrypt_error}")
+                            # Ajouter quand même le message non déchiffré
+                            message_data = {
+                                'id': event.event_id,
+                                'sender': event.sender,
+                                'content': "[Message chiffré]",
+                                'timestamp': datetime.fromtimestamp(event.server_timestamp / 1000).isoformat() if event.server_timestamp else "",
+                                'room_id': room_id,
+                                'type': 'encrypted',
+                                'decrypted': False
+                            }
+
+                    # Ajouter le message s'il a été traité
+                    if message_data:
                         messages.append(message_data)
 
                 logger.info(f"📊 Retrieved {len(messages)} messages from room {room_id}")
             else:
-                logger.warning(f"No messages found in room {room_id}")
+                logger.warning(f"No messages found in room {room_id} (response type: {type(response)})")
 
         except Exception as e:
             logger.error(f"Error getting room messages: {e}")
+            import traceback
+            traceback.print_exc()
 
         return messages
 
