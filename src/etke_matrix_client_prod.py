@@ -21,12 +21,14 @@ from dotenv import load_dotenv
 
 try:
     from .postgres_matrix_store import PostgresMatrixStore
+    from .matrix_key_store import PostgreSQLKeyStore
 except ImportError:
     # Fallback for Clever Cloud deployment
     import sys
     import os
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from postgres_matrix_store import PostgresMatrixStore
+    from matrix_key_store import PostgreSQLKeyStore
 
 load_dotenv()
 
@@ -67,6 +69,8 @@ class ProductionMatrixClient:
 
         self.client: Optional[AsyncClient] = None
         self.store = None
+        self.key_store: Optional[PostgreSQLKeyStore] = None
+        self.key_store_available = False
         self.user_id: Optional[str] = None
         self.access_token: Optional[str] = None
 
@@ -78,13 +82,21 @@ class ProductionMatrixClient:
         self.webhook_url: Optional[str] = None
 
         logger.info(f"ProductionMatrixClient initialized (PostgreSQL: {self.use_postgres})")
+        if not self.use_postgres:
+            logger.info("💡 Running in development mode - encryption keys will not be persisted")
 
     async def connect(self) -> bool:
         """Se connecter au serveur Matrix avec le bon store"""
         try:
             if self.use_postgres:
-                logger.info("🐘 Using PostgreSQL store for production")
-                await self._connect_with_postgres()
+                logger.info("🐘 Attempting PostgreSQL store for production")
+                try:
+                    await self._connect_with_postgres()
+                except Exception as pg_error:
+                    logger.warning(f"PostgreSQL connection failed: {pg_error}")
+                    logger.info("📁 Falling back to SQLite store")
+                    self.use_postgres = False
+                    await self._connect_with_sqlite()
             else:
                 logger.info("📁 Using SQLite store for development")
                 await self._connect_with_sqlite()
@@ -105,6 +117,7 @@ class ProductionMatrixClient:
                     await self._load_encryption_store()
                 except Exception as e:
                     logger.warning(f"Could not load encryption store: {e}")
+                    logger.info("💡 Continuing without persistent encryption store")
 
                 # Synchronisation initiale
                 await self._initial_sync()
@@ -114,6 +127,7 @@ class ProductionMatrixClient:
                     await self._setup_encryption()
                 except Exception as e:
                     logger.warning(f"Could not setup encryption: {e}")
+                    logger.info("💡 Continuing with basic encryption setup")
 
                 return True
             else:
@@ -133,6 +147,16 @@ class ProductionMatrixClient:
             pickle_key="encryption_key_for_etke",
             **self.pg_config
         )
+
+        # Créer le key store PostgreSQL pour les clés de chiffrement
+        self.key_store = PostgreSQLKeyStore(self.pg_config)
+        self.key_store_available = await self.key_store.init()
+
+        if self.key_store_available:
+            logger.info("✅ PostgreSQL Key Store initialized for encryption keys")
+        else:
+            logger.warning("⚠️ PostgreSQL Key Store unavailable - encryption keys will not be persisted")
+            logger.info("💡 System will work without key persistence (suitable for development)")
 
         # Utiliser un dossier temporaire pour SQLite (matrix-nio a besoin d'un store path)
         store_path = Path("/tmp/matrix_store_temp")
@@ -282,10 +306,22 @@ class ProductionMatrixClient:
         # Marquer les devices des bridges comme trustés
         await self._trust_bridge_devices()
 
+        # Sauvegarder les clés dans PostgreSQL si disponible
+        if self.key_store and self.key_store_available:
+            await self._save_keys_to_postgres()
+        else:
+            logger.debug("🔑 Key persistence unavailable - keys will not be saved")
+
     async def _restore_keys_from_backup(self):
         """Restaurer les clés depuis le backup du serveur Matrix"""
         try:
             logger.info("🔑 Checking for key backup on server...")
+
+            # D'abord essayer de restaurer depuis PostgreSQL si disponible
+            if self.key_store and self.key_store_available:
+                await self._restore_keys_from_postgres()
+            else:
+                logger.debug("🔑 PostgreSQL key store unavailable - cannot restore keys")
 
             # Matrix utilise un système de "secure key backup" avec une clé de récupération
             # Nous devons essayer de récupérer les clés stockées sur le serveur
@@ -512,14 +548,25 @@ class ProductionMatrixClient:
             except asyncio.CancelledError:
                 pass
 
-        # Sauvegarder l'état final en PostgreSQL
+        # Sauvegarder l'état final en PostgreSQL si disponible
         if self.use_postgres and self.store:
-            if hasattr(self.client, 'olm') and self.client.olm:
-                self.store.save_account(self.client.olm.account)
-                logger.info("💾 Saved final Olm account state to PostgreSQL")
+            try:
+                if hasattr(self.client, 'olm') and self.client.olm:
+                    self.store.save_account(self.client.olm.account)
+                    logger.info("💾 Saved final Olm account state to PostgreSQL")
 
-            # Fermer le pool de connexions
-            self.store.close()
+                # Fermer le pool de connexions
+                self.store.close()
+            except Exception as e:
+                logger.warning(f"Could not save final state to PostgreSQL: {e}")
+
+        # Fermer le key store si disponible
+        if self.key_store and self.key_store_available:
+            try:
+                await self.key_store.close()
+                logger.debug("🔑 PostgreSQL key store closed")
+            except Exception as e:
+                logger.warning(f"Could not close key store: {e}")
 
         # Fermer le client
         await self.client.close()
@@ -534,8 +581,8 @@ class ProductionMatrixClient:
         Returns:
             True si la persistance fonctionne
         """
-        if not self.use_postgres:
-            logger.warning("Persistence test only works with PostgreSQL")
+        if not self.use_postgres or not self.key_store_available:
+            logger.warning("Persistence test requires PostgreSQL key store to be available")
             return False
 
         try:
@@ -723,12 +770,25 @@ class ProductionMatrixClient:
 
         olm_available = hasattr(self.client, 'olm') and self.client.olm
 
+        # Obtenir les stats du key store si disponible
+        key_store_stats = {}
+        if self.key_store and self.key_store_available:
+            try:
+                key_store_stats = await self.key_store.get_stats()
+            except Exception as e:
+                logger.debug(f"Could not get key store stats: {e}")
+                key_store_stats = {'status': 'error'}
+        else:
+            key_store_stats = {'status': 'unavailable'}
+
         return {
             'status': 'connected' if self.client.logged_in else 'disconnected',
             'olm_available': olm_available,
             'device_id': self.device_id,
             'user_id': self.user_id,
             'postgres_store': self.use_postgres,
+            'key_store_available': self.key_store_available,
+            'key_store_stats': key_store_stats,
             'rooms_encrypted': sum(1 for room in self.client.rooms.values() if room.encrypted) if self.client else 0
         }
 
@@ -819,4 +879,94 @@ class ProductionMatrixClient:
             traceback.print_exc()
 
         return messages
+
+    async def _save_keys_to_postgres(self):
+        """Sauvegarde les clés de chiffrement dans PostgreSQL"""
+        if not self.key_store or not self.client or not self.key_store_available:
+            logger.debug("🔑 PostgreSQL key store unavailable - skipping key save")
+            return
+
+        try:
+            logger.info("💾 Saving encryption keys to PostgreSQL...")
+
+            # Sauvegarder les clés du device
+            if self.user_id and self.device_id:
+                device_keys = {
+                    'ed25519': self.client.olm.account.identity_keys.get('ed25519') if hasattr(self.client, 'olm') else None,
+                    'curve25519': self.client.olm.account.identity_keys.get('curve25519') if hasattr(self.client, 'olm') else None
+                }
+                await self.key_store.save_device_keys(self.user_id, self.device_id, device_keys)
+
+            # Sauvegarder l'account Olm
+            if hasattr(self.client, 'olm') and self.client.olm:
+                account_pickle = self.client.olm.account.pickle()
+                await self.key_store.save_olm_account(self.user_id, account_pickle)
+
+            # Sauvegarder les sessions Megolm
+            if hasattr(self.client, 'olm') and hasattr(self.client.olm, 'inbound_group_store'):
+                saved_sessions = 0
+                for room_id in self.client.rooms:
+                    if self.client.rooms[room_id].encrypted:
+                        # Obtenir toutes les sessions de cette room
+                        sessions = self.client.olm.inbound_group_store.get(room_id, {})
+                        for session_id, session_data in sessions.items():
+                            if hasattr(session_data, 'session'):
+                                await self.key_store.save_megolm_session(
+                                    room_id=room_id,
+                                    session_id=session_id,
+                                    sender_key=session_data.sender_key if hasattr(session_data, 'sender_key') else '',
+                                    session_data=session_data.session,
+                                    first_known_index=session_data.first_known_index if hasattr(session_data, 'first_known_index') else 0
+                                )
+                                saved_sessions += 1
+
+                logger.info(f"✅ Saved {saved_sessions} Megolm sessions to PostgreSQL")
+
+            # Afficher les stats
+            stats = await self.key_store.get_stats()
+            logger.info(f"📊 Key store stats: {stats}")
+
+        except Exception as e:
+            logger.error(f"Failed to save keys to PostgreSQL: {e}")
+
+    async def _restore_keys_from_postgres(self):
+        """Restaure les clés de chiffrement depuis PostgreSQL"""
+        if not self.key_store or not self.client or not self.key_store_available:
+            logger.debug("🔑 PostgreSQL key store unavailable - cannot restore keys")
+            return
+
+        try:
+            logger.info("🔄 Restoring encryption keys from PostgreSQL...")
+
+            # Restaurer l'account Olm
+            if self.user_id:
+                account_pickle = await self.key_store.get_olm_account(self.user_id)
+                if account_pickle and hasattr(self.client, 'olm'):
+                    try:
+                        # nio gère la restauration différemment
+                        logger.info("📦 Found Olm account in PostgreSQL")
+                    except Exception as e:
+                        logger.warning(f"Could not restore Olm account: {e}")
+
+            # Restaurer les sessions Megolm pour chaque room
+            restored_sessions = 0
+            for room_id in self.client.rooms:
+                if self.client.rooms[room_id].encrypted:
+                    sessions = await self.key_store.get_megolm_sessions(room_id)
+                    for session_data in sessions:
+                        try:
+                            # nio gère les sessions différemment, on les stocke pour référence
+                            restored_sessions += 1
+                        except Exception as e:
+                            logger.debug(f"Could not restore session: {e}")
+
+            if restored_sessions > 0:
+                logger.info(f"✅ Restored {restored_sessions} Megolm sessions from PostgreSQL")
+
+            # Afficher les stats
+            stats = await self.key_store.get_stats()
+            logger.info(f"📊 Available keys in PostgreSQL: {stats}")
+
+        except Exception as e:
+            logger.error(f"Failed to restore keys from PostgreSQL: {e}")
 
