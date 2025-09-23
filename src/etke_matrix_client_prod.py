@@ -7,6 +7,7 @@ import os
 import asyncio
 from typing import Optional, Dict, List, Any
 from pathlib import Path
+from datetime import datetime
 
 from nio import (
     AsyncClient,
@@ -82,6 +83,11 @@ class ProductionMatrixClient:
         logger.info(f"ProductionMatrixClient initialized (PostgreSQL: {self.use_postgres})")
         if not self.use_postgres:
             logger.info("💡 Running in development mode - encryption keys will not be persisted")
+
+    @property
+    def logged_in(self) -> bool:
+        """Property delegation to underlying AsyncClient.logged_in"""
+        return self.client.logged_in if self.client else False
 
     async def connect(self) -> bool:
         """Se connecter au serveur Matrix avec le bon store"""

@@ -122,7 +122,7 @@ async def health_check():
     """Vérification de l'état de l'API"""
     global matrix_client
 
-    matrix_status = "connected" if matrix_client and hasattr(matrix_client, 'logged_in') and matrix_client.logged_in else "disconnected"
+    matrix_status = "connected" if matrix_client and matrix_client.logged_in else "disconnected"
 
     return ApiResponse(
         success=True,
@@ -144,7 +144,7 @@ async def get_room_messages(
     global matrix_client
 
     try:
-        if not matrix_client or not hasattr(matrix_client, 'logged_in') or not matrix_client.logged_in:
+        if not matrix_client or not matrix_client.logged_in:
             # Retourner des messages factices pour les tests si pas connecté
             logger.warning(f"⚠️ Client Matrix non connecté - retour de données fictives pour {room_id}")
             return RoomMessagesResponse(
@@ -222,19 +222,19 @@ async def get_rooms():
     global matrix_client
 
     try:
-        if not matrix_client or not hasattr(matrix_client, 'logged_in') or not matrix_client.logged_in:
+        if not matrix_client or not matrix_client.logged_in:
             return ApiResponse(
                 success=False,
                 message="Client Matrix non connecté",
                 data={"rooms": []}
             )
 
-        rooms = await matrix_client.get_rooms()
+        rooms_data = await matrix_client.get_rooms_list()
 
         return ApiResponse(
             success=True,
-            message=f"{len(rooms)} rooms trouvées",
-            data={"rooms": rooms}
+            message=f"{rooms_data['total']} rooms trouvées",
+            data={"rooms": rooms_data['rooms']}
         )
 
     except Exception as e:
@@ -251,7 +251,7 @@ async def send_message(message_request: MessageRequest):
     global matrix_client
 
     try:
-        if not matrix_client or not hasattr(matrix_client, 'logged_in') or not matrix_client.logged_in:
+        if not matrix_client or not matrix_client.logged_in:
             raise HTTPException(status_code=503, detail="Client Matrix non connecté")
 
         result = await matrix_client.send_message(
@@ -284,12 +284,12 @@ async def test_connection():
     """Test de connexion Matrix"""
     global matrix_client
 
-    matrix_status = "connected" if matrix_client and hasattr(matrix_client, 'logged_in') and matrix_client.logged_in else "disconnected"
+    matrix_status = "connected" if matrix_client and matrix_client.logged_in else "disconnected"
 
     return ApiResponse(
-        success=matrix_client and hasattr(matrix_client, 'logged_in') and matrix_client.logged_in,
+        success=matrix_client and matrix_client.logged_in,
         message=f"Statut Matrix: {matrix_status}",
-        data={"matrix_connected": matrix_client and hasattr(matrix_client, 'logged_in') and matrix_client.logged_in}
+        data={"matrix_connected": matrix_client and matrix_client.logged_in}
     )
 
 # Point d'entrée pour uvicorn
