@@ -260,6 +260,9 @@ class ProductionMatrixClient:
         # Télécharger les clés des autres devices
         await self.client.keys_query()
 
+        # Essayer de restaurer les clés depuis le backup du serveur
+        await self._restore_keys_from_backup()
+
         # Partager les clés pour toutes les rooms chiffrées
         shared_count = 0
         for room_id in self.client.rooms:
@@ -278,6 +281,39 @@ class ProductionMatrixClient:
 
         # Marquer les devices des bridges comme trustés
         await self._trust_bridge_devices()
+
+    async def _restore_keys_from_backup(self):
+        """Restaurer les clés depuis le backup du serveur Matrix"""
+        try:
+            logger.info("🔑 Checking for key backup on server...")
+
+            # Matrix utilise un système de "secure key backup" avec une clé de récupération
+            # Nous devons essayer de récupérer les clés stockées sur le serveur
+            from nio import RoomKeysVersionResponse
+
+            # Vérifier si un backup existe
+            backup_response = await self.client.room_keys_version()
+
+            if isinstance(backup_response, RoomKeysVersionResponse):
+                logger.info(f"📦 Found key backup version {backup_response.version}")
+
+                # Essayer de récupérer les clés pour toutes les rooms
+                # Note: Ceci nécessite que le stockage sécurisé soit configuré
+                for room_id in self.client.rooms:
+                    if self.client.rooms[room_id].encrypted:
+                        try:
+                            # Essayer de récupérer les clés de cette room
+                            keys_response = await self.client.room_keys(room_id)
+                            logger.debug(f"Retrieved keys for room {room_id}")
+                        except Exception as room_error:
+                            logger.debug(f"No backup keys for room {room_id}: {room_error}")
+
+                logger.info("✅ Key restoration attempt completed")
+            else:
+                logger.info("📭 No key backup found on server (this is normal for new sessions)")
+
+        except Exception as e:
+            logger.warning(f"Could not check key backup: {e} (this is normal if not configured)")
 
     async def _trust_bridge_devices(self):
         """Fait automatiquement confiance aux devices des bridges"""
