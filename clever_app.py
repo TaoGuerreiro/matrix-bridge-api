@@ -117,6 +117,11 @@ async def root():
         data={"version": "1.0.0", "status": "active"}
     )
 
+@app.get("/health")
+async def health():
+    """Health check pour Clever Cloud"""
+    return {"status": "ok"}
+
 @app.get("/api/v1/health", response_model=ApiResponse)
 async def health_check():
     """Vérification de l'état de l'API"""
