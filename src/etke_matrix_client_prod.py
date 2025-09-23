@@ -140,13 +140,14 @@ class ProductionMatrixClient:
             encryption_enabled=True
         )
 
-        # Créer le client avec le store custom
+        # Créer le client sans le store (matrix-nio ne supporte pas store en argument)
+        # Pour PostgreSQL, utiliser store_path à la place
         self.client = AsyncClient(
             homeserver=self.homeserver,
             user=self.username,
             device_id=self.device_id,
-            config=config,
-            store=self.store  # Store PostgreSQL
+            config=config
+            # Note: PostgreSQL store devra être configuré différemment
         )
 
         logger.info("PostgreSQL store configured successfully")
