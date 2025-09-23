@@ -858,27 +858,44 @@ class ProductionMatrixClient:
             return []
 
         messages = []
+        encrypted_count = 0
+        decrypted_count = 0
+        plain_count = 0
+
         try:
             # Récupérer l'historique des messages
-            from nio import RoomMessagesResponse, RoomMessageText, MegolmEvent
+            from nio import RoomMessagesResponse, RoomMessageText, MegolmEvent, EncryptionError
+            from nio.responses import RoomMessagesError
 
             # Increase limit to get more events (Matrix returns all types of events, not just messages)
-            actual_limit = max(limit * 3, 200)  # Request more events to get enough actual messages
+            # We need more events because many might be encrypted and we can't decrypt them
+            actual_limit = min(limit * 10, 1000)  # Request much more to ensure we get enough readable messages
             logger.info(f"📥 Fetching up to {actual_limit} events from room {room_id}")
 
             response = await self.client.room_messages(
                 room_id,
                 start="",
-                limit=actual_limit
+                limit=actual_limit,
+                direction=MessageDirection.back
             )
+
+            if isinstance(response, RoomMessagesError):
+                logger.error(f"❌ Failed to fetch messages: {response.message}")
+                return []
 
             if isinstance(response, RoomMessagesResponse) and response.chunk:
                 logger.info(f"Got {len(response.chunk)} events from room")
+
                 for event in response.chunk:
+                    # Stop if we have enough messages
+                    if len(messages) >= limit:
+                        break
+
                     message_data = None
 
                     # Messages texte non chiffrés
                     if isinstance(event, RoomMessageText):
+                        plain_count += 1
                         message_data = {
                             'id': event.event_id,
                             'sender': event.sender,
@@ -886,15 +903,19 @@ class ProductionMatrixClient:
                             'timestamp': datetime.fromtimestamp(event.server_timestamp / 1000).isoformat() if event.server_timestamp else "",
                             'room_id': room_id,
                             'type': 'text',
-                            'decrypted': False
+                            'decrypted': True  # Plain text is considered "decrypted"
                         }
 
                     # Messages chiffrés
                     elif isinstance(event, MegolmEvent):
-                        # Essayer de déchiffrer
+                        encrypted_count += 1
+                        # Try to decrypt
                         try:
-                            decrypted = await self.decrypt_event(event)
-                            if decrypted and hasattr(decrypted, 'body'):
+                            # Use the client's decrypt_event method directly
+                            decrypted = self.client.decrypt_event(event)
+
+                            if isinstance(decrypted, RoomMessageText):
+                                decrypted_count += 1
                                 message_data = {
                                     'id': event.event_id,
                                     'sender': event.sender,
@@ -904,34 +925,34 @@ class ProductionMatrixClient:
                                     'type': 'text',
                                     'decrypted': True
                                 }
-                        except Exception as decrypt_error:
-                            logger.debug(f"Could not decrypt message: {decrypt_error}")
-                            # Ajouter quand même le message non déchiffré
-                            message_data = {
-                                'id': event.event_id,
-                                'sender': event.sender,
-                                'content': "[Message chiffré]",
-                                'timestamp': datetime.fromtimestamp(event.server_timestamp / 1000).isoformat() if event.server_timestamp else "",
-                                'room_id': room_id,
-                                'type': 'encrypted',
-                                'decrypted': False
-                            }
+                            elif isinstance(decrypted, EncryptionError):
+                                # We can't decrypt this message, skip it
+                                logger.debug(f"Cannot decrypt: {decrypted}")
+                                continue
+                            else:
+                                # Unknown type, skip
+                                continue
+
+                        except Exception as e:
+                            # Skip messages we can't decrypt
+                            logger.debug(f"Skipping encrypted message: {e}")
+                            continue
 
                     # Ajouter le message s'il a été traité
                     if message_data:
                         messages.append(message_data)
 
-                logger.info(f"📊 Retrieved {len(messages)} messages from room {room_id}")
+                logger.info(f"📊 Message stats - Plain: {plain_count}, Encrypted: {encrypted_count}, Decrypted: {decrypted_count}")
+                logger.info(f"✅ Returning {len(messages)} readable messages from room {room_id}")
             else:
-                logger.warning(f"No messages found in room {room_id} (response type: {type(response)})")
+                logger.warning(f"No messages found in room {room_id}")
 
         except Exception as e:
             logger.error(f"Error getting room messages: {e}")
             import traceback
             traceback.print_exc()
 
-        # Limit results to requested amount
-        return messages[:limit]
+        return messages
 
     async def _save_keys_to_postgres(self):
         """Sauvegarde les clés de chiffrement dans PostgreSQL"""

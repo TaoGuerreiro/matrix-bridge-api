@@ -3,7 +3,8 @@
 # Script de test complet pour l'API etke.cc
 # Usage: ./test_api.sh [commande]
 
-API_BASE="http://localhost:8000/api/v1"
+# API_BASE="http://localhost:8000/api/v1"
+API_BASE="https://www.beeper.chalky.fr/api/v1"
 
 # Couleurs pour l'affichage
 RED='\033[0;31m'
