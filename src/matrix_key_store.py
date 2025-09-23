@@ -25,10 +25,13 @@ class PostgreSQLKeyStore:
     async def init(self):
         """Initialise la connexion et crée les tables si nécessaire"""
         try:
+            # Extraire pool_size du config et l'utiliser pour min_size/max_size
+            pool_size = self.pg_config.pop('pool_size', 5)
+
             self.connection_pool = await asyncpg.create_pool(
                 **self.pg_config,
                 min_size=1,
-                max_size=5
+                max_size=pool_size
             )
 
             await self._create_tables()

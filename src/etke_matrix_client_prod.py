@@ -206,7 +206,7 @@ class ProductionMatrixClient:
     async def _load_encryption_store(self):
         """Charge le store de chiffrement (PostgreSQL ou SQLite)"""
         try:
-            if self.use_postgres:
+            if self.use_postgres and self.store:
                 # Charger depuis PostgreSQL
                 account = self.store.load_account()
                 if account:
@@ -222,6 +222,9 @@ class ProductionMatrixClient:
                 # Charger les device keys
                 device_keys = self.store.load_device_keys()
                 logger.info(f"📱 Loaded device keys for {len(device_keys)} users")
+
+            elif self.use_postgres and not self.store:
+                logger.warning("⚠️ PostgreSQL store unavailable - skipping key loading")
 
             else:
                 # SQLite - utiliser la méthode nio standard
@@ -244,7 +247,7 @@ class ProductionMatrixClient:
         sync_response = await self.client.sync(timeout=30000, full_state=True)
 
         # Sauvegarder le token de sync
-        if self.use_postgres and sync_response.next_batch:
+        if self.use_postgres and self.store and sync_response.next_batch:
             self.store.save_sync_token(sync_response.next_batch)
 
         # Parser les rooms Instagram/Messenger initiales
@@ -371,7 +374,7 @@ class ProductionMatrixClient:
                         logger.debug(f"✅ Trusted device {device.id} for {user_id}")
 
                         # Sauvegarder en PostgreSQL si activé
-                        if self.use_postgres:
+                        if self.use_postgres and self.store:
                             self.store.save_device_keys(
                                 user_id,
                                 device.id,
@@ -391,7 +394,7 @@ class ProductionMatrixClient:
             Le contenu déchiffré ou None
         """
         try:
-            if self.use_postgres:
+            if self.use_postgres and self.store:
                 # Chercher la session dans PostgreSQL
                 session = self.store.get_inbound_group_session(
                     event.room_id,
@@ -576,7 +579,7 @@ class ProductionMatrixClient:
         Returns:
             True si la persistance fonctionne
         """
-        if not self.use_postgres or not self.key_store_available:
+        if not self.use_postgres or not self.key_store_available or not self.store:
             logger.warning("Persistence test requires PostgreSQL key store to be available")
             return False
 
