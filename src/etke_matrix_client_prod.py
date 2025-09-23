@@ -906,20 +906,28 @@ class ProductionMatrixClient:
             # Sauvegarder les sessions Megolm
             if hasattr(self.client, 'olm') and hasattr(self.client.olm, 'inbound_group_store'):
                 saved_sessions = 0
-                for room_id in self.client.rooms:
-                    if self.client.rooms[room_id].encrypted:
-                        # Obtenir toutes les sessions de cette room
-                        sessions = self.client.olm.inbound_group_store.get(room_id, {})
-                        for session_id, session_data in sessions.items():
-                            if hasattr(session_data, 'session'):
-                                await self.key_store.save_megolm_session(
-                                    room_id=room_id,
-                                    session_id=session_id,
-                                    sender_key=session_data.sender_key if hasattr(session_data, 'sender_key') else '',
-                                    session_data=session_data.session,
-                                    first_known_index=session_data.first_known_index if hasattr(session_data, 'first_known_index') else 0
-                                )
-                                saved_sessions += 1
+                try:
+                    # Utiliser l'attribut store directement si disponible
+                    if hasattr(self.client.olm.inbound_group_store, 'store'):
+                        sessions_store = self.client.olm.inbound_group_store.store
+                        for room_id, room_sessions in sessions_store.items():
+                            if isinstance(room_sessions, dict):
+                                for session_id, session_data in room_sessions.items():
+                                    try:
+                                        await self.key_store.save_megolm_session(
+                                            room_id=room_id,
+                                            session_id=session_id,
+                                            sender_key=getattr(session_data, 'sender_key', ''),
+                                            session_data=session_data,
+                                            first_known_index=getattr(session_data, 'first_known_index', 0)
+                                        )
+                                        saved_sessions += 1
+                                    except Exception as e:
+                                        logger.debug(f"Skipped session {session_id}: {e}")
+                    else:
+                        logger.debug("Megolm sessions store not accessible - skipping session save")
+                except Exception as e:
+                    logger.debug(f"Could not save Megolm sessions: {e}")
 
                 logger.info(f"✅ Saved {saved_sessions} Megolm sessions to PostgreSQL")
 
