@@ -7,7 +7,7 @@ import httpx
 import json
 from loguru import logger
 
-PRODUCTION_URL = "https://beeper-v2.cleverapps.io"
+PRODUCTION_URL = "https://www.beeper.chalky.fr"
 
 async def test_production_api():
     """Test all production endpoints"""
