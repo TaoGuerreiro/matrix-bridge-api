@@ -120,6 +120,11 @@ async def lifespan(app: FastAPI):
         await matrix_client.start()
         logger.success("✅ Matrix client started successfully")
 
+        # Démarrer la synchronisation continue en arrière-plan
+        logger.info("🔄 Starting continuous sync task...")
+        asyncio.create_task(matrix_client.listen_for_messages())
+        logger.info("✅ Background sync task started")
+
         # Configurer le webhook si défini
         if WEBHOOK_URL:
             await matrix_client.setup_webhook(WEBHOOK_URL)
@@ -341,6 +346,46 @@ async def fix_encryption(background_tasks: BackgroundTasks):
         "status": "initiated",
         "message": "Encryption fix started in background"
     }
+
+@app.get("/api/v1/debug/sync")
+async def debug_sync():
+    """Debug endpoint pour vérifier l'état de synchronisation"""
+    if not matrix_client:
+        raise HTTPException(status_code=503, detail="Matrix client not initialized")
+
+    try:
+        total_rooms = len(matrix_client.client.rooms) if matrix_client.client else 0
+        instagram_rooms = len(matrix_client.instagram_rooms)
+        messenger_rooms = len(matrix_client.messenger_rooms)
+
+        # Get sample room data
+        sample_rooms = []
+        if matrix_client.client:
+            for room_id, room in list(matrix_client.client.rooms.items())[:5]:  # First 5 rooms
+                sample_rooms.append({
+                    'room_id': room_id,
+                    'display_name': room.display_name,
+                    'encrypted': room.encrypted,
+                    'member_count': len(room.users)
+                })
+
+        return {
+            "sync_status": {
+                "total_rooms": total_rooms,
+                "instagram_rooms": instagram_rooms,
+                "messenger_rooms": messenger_rooms,
+                "sync_task_active": matrix_client.sync_task is not None and not matrix_client.sync_task.done() if matrix_client.sync_task else False
+            },
+            "room_tracking": {
+                "instagram": list(matrix_client.instagram_rooms.keys()),
+                "messenger": list(matrix_client.messenger_rooms.keys())
+            },
+            "sample_rooms": sample_rooms,
+            "client_logged_in": matrix_client.client.logged_in if matrix_client.client else False
+        }
+    except Exception as e:
+        logger.error(f"Debug sync failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Webhook endpoints pour recevoir les callbacks
 @app.post("/webhooks/instagram")

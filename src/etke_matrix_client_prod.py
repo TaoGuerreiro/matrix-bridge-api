@@ -159,9 +159,11 @@ class ProductionMatrixClient:
 
     async def _connect_with_sqlite(self):
         """Connexion avec store SQLite (fallback)"""
-        # Utiliser un répertoire persistant sur Clever Cloud
-        # /app/data est persistant sur Clever Cloud avec FS Bucket
-        store_path = Path(os.environ.get("MATRIX_STORE_PATH", "/app/data/matrix_store"))
+        # Utiliser un répertoire approprié selon l'environnement
+        # Sur Clever Cloud, /tmp est disponible
+        # En local, utiliser un dossier local
+        default_path = "/tmp/matrix_store" if os.path.exists("/tmp") else "./matrix_store"
+        store_path = Path(os.environ.get("MATRIX_STORE_PATH", default_path))
         store_path.mkdir(parents=True, exist_ok=True)
 
         config = AsyncClientConfig(
@@ -218,23 +220,36 @@ class ProductionMatrixClient:
     async def _initial_sync(self):
         """Synchronisation initiale pour récupérer l'état"""
         logger.info("🔄 Initial sync...")
+
         sync_response = await self.client.sync(timeout=30000, full_state=True)
 
         # Sauvegarder le token de sync
         if self.use_postgres and sync_response.next_batch:
             self.store.save_sync_token(sync_response.next_batch)
 
-        # Parser les rooms Instagram/Messenger
+        # Parser les rooms Instagram/Messenger initiales
+        # Les rooms etke.cc ont des membres comme @instagram_XXX ou @whatsapp_XXX
         for room_id, room in self.client.rooms.items():
-            room_name = room.display_name or ""
+            room_name = room.display_name or room_id
 
-            if "instagram" in room_name.lower() or "(ig)" in room_name.lower():
+            # Chercher dans les membres de la room pour identifier le type
+            room_members = list(room.users.keys()) if hasattr(room, 'users') else []
+            room_info = f"{room_name} (members: {', '.join(room_members[:3])}...)" if room_members else room_name
+
+            # Détecter Instagram par les membres ou le nom
+            if any("instagram" in member.lower() for member in room_members) or "instagram" in room_name.lower():
                 self.instagram_rooms[room_id] = room_name
-                logger.info(f"📷 Found Instagram room: {room_name}")
+                logger.info(f"📷 Found Instagram room: {room_info}")
 
-            elif "messenger" in room_name.lower() or "facebook" in room_name.lower():
+            # Détecter Messenger/Facebook par les membres ou le nom
+            elif any("messenger" in member.lower() or "facebook" in member.lower() for member in room_members) or "messenger" in room_name.lower() or "facebook" in room_name.lower():
                 self.messenger_rooms[room_id] = room_name
-                logger.info(f"💬 Found Messenger room: {room_name}")
+                logger.info(f"💬 Found Messenger room: {room_info}")
+
+            # Pour WhatsApp (au cas où)
+            elif any("whatsapp" in member.lower() for member in room_members) or "whatsapp" in room_name.lower():
+                # On pourrait créer une catégorie WhatsApp ou l'ignorer
+                logger.info(f"📱 Found WhatsApp room (ignored): {room_info}")
 
         logger.info(f"🔗 Total found: {len(self.instagram_rooms)} Instagram, {len(self.messenger_rooms)} Messenger")
 
@@ -385,6 +400,38 @@ class ProductionMatrixClient:
         if callback:
             self.message_callbacks.append(callback)
 
+        # Callback pour détecter de nouvelles rooms lors des syncs
+        @self.client.event
+        async def on_sync(response):
+            """Callback appelé après chaque sync pour détecter les nouvelles rooms"""
+            try:
+                # Vérifier si de nouvelles rooms ont été ajoutées
+                current_room_ids = set(self.client.rooms.keys())
+                tracked_room_ids = set(self.instagram_rooms.keys()) | set(self.messenger_rooms.keys())
+
+                new_rooms = current_room_ids - tracked_room_ids
+
+                if new_rooms:
+                    logger.info(f"🔍 Found {len(new_rooms)} new rooms during sync")
+
+                    for room_id in new_rooms:
+                        room = self.client.rooms.get(room_id)
+                        if room:
+                            room_name = room.display_name or ""
+
+                            if "instagram" in room_name.lower() or "(ig)" in room_name.lower():
+                                self.instagram_rooms[room_id] = room_name
+                                logger.info(f"📷 New Instagram room: {room_name}")
+
+                            elif "messenger" in room_name.lower() or "facebook" in room_name.lower():
+                                self.messenger_rooms[room_id] = room_name
+                                logger.info(f"💬 New Messenger room: {room_name}")
+
+                    logger.info(f"🔗 Updated totals: {len(self.instagram_rooms)} Instagram, {len(self.messenger_rooms)} Messenger")
+
+            except Exception as e:
+                logger.error(f"Error in sync callback: {e}")
+
         # Callbacks pour les messages
         @self.client.event
         async def on_room_message(room, event):
@@ -415,7 +462,7 @@ class ProductionMatrixClient:
             self.client.sync_forever(timeout=30000, full_state=False)
         )
 
-        logger.info("⚡ Message listener started with decryption support")
+        logger.info("⚡ Message listener started with decryption support and room detection")
 
     async def close(self):
         """Ferme proprement le client et les connexions"""
@@ -566,32 +613,72 @@ class ProductionMatrixClient:
         messages.sort(key=lambda x: x.get('timestamp', 0), reverse=True)
         return messages[:limit]
 
-    async def get_rooms_list(self) -> List[Dict]:
+    async def get_rooms_list(self) -> Dict[str, Any]:
         """Get list of all rooms with metadata"""
+        # Si aucune room trackée, force une synchronisation pour détecter les rooms
+        if not self.instagram_rooms and not self.messenger_rooms and self.client:
+            logger.info("🔄 No rooms tracked, forcing sync to detect rooms...")
+            try:
+                await self.client.sync(timeout=10000, full_state=True)
+
+                # Re-parse les rooms après sync
+                for room_id, room in self.client.rooms.items():
+                    room_name = room.display_name or ""
+
+                    if "instagram" in room_name.lower() or "(ig)" in room_name.lower():
+                        self.instagram_rooms[room_id] = room_name
+                        logger.info(f"📷 Detected Instagram room: {room_name}")
+
+                    elif "messenger" in room_name.lower() or "facebook" in room_name.lower():
+                        self.messenger_rooms[room_id] = room_name
+                        logger.info(f"💬 Detected Messenger room: {room_name}")
+
+                logger.info(f"🔗 After sync: {len(self.instagram_rooms)} Instagram, {len(self.messenger_rooms)} Messenger")
+            except Exception as e:
+                logger.error(f"Failed to sync for room detection: {e}")
+
         rooms = []
 
         for room_id, room_name in self.instagram_rooms.items():
+            room_obj = self.client.rooms.get(room_id) if self.client else None
             rooms.append({
                 'room_id': room_id,
                 'name': room_name,
                 'platform': 'instagram',
-                'encrypted': self.client.rooms.get(room_id, {}).encrypted if self.client else False
+                'encrypted': room_obj.encrypted if room_obj else False
             })
 
         for room_id, room_name in self.messenger_rooms.items():
+            room_obj = self.client.rooms.get(room_id) if self.client else None
             rooms.append({
                 'room_id': room_id,
                 'name': room_name,
                 'platform': 'messenger',
-                'encrypted': self.client.rooms.get(room_id, {}).encrypted if self.client else False
+                'encrypted': room_obj.encrypted if room_obj else False
             })
 
-        return rooms
+        return {
+            'total': len(rooms),
+            'rooms': rooms
+        }
 
     async def sync_once(self):
         """Perform a single sync operation"""
         if self.client:
-            await self.client.sync(timeout=10000)
+            logger.info("🔄 Performing single sync...")
+            try:
+                sync_response = await self.client.sync(timeout=10000)
+                logger.info(f"✅ Sync completed. Next batch: {sync_response.next_batch if hasattr(sync_response, 'next_batch') else 'N/A'}")
+
+                # Update room tracking after sync
+                current_rooms = len(self.client.rooms)
+                tracked_rooms = len(self.instagram_rooms) + len(self.messenger_rooms)
+                logger.info(f"📊 Rooms: {current_rooms} total, {tracked_rooms} tracked")
+
+                return sync_response
+            except Exception as e:
+                logger.error(f"❌ Sync failed: {e}")
+                raise
 
     async def get_encryption_status(self) -> Dict:
         """Get encryption status information"""
