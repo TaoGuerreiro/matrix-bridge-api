@@ -125,8 +125,8 @@ class ProductionMatrixClient:
             return False
 
     async def _connect_with_postgres(self):
-        """Connexion avec store PostgreSQL"""
-        # Créer le store PostgreSQL
+        """Connexion avec SQLite temporaire + sauvegarde PostgreSQL"""
+        # Créer le store PostgreSQL pour sauvegarder les données
         self.store = PostgresMatrixStore(
             user_id=self.username,
             device_id=self.device_id,
@@ -134,28 +134,35 @@ class ProductionMatrixClient:
             **self.pg_config
         )
 
+        # Utiliser un dossier temporaire pour SQLite (matrix-nio a besoin d'un store path)
+        store_path = Path("/tmp/matrix_store_temp")
+        store_path.mkdir(exist_ok=True)
+
         # Configuration du client avec chiffrement
         config = AsyncClientConfig(
             store_sync_tokens=True,
-            encryption_enabled=True
+            encryption_enabled=True,
+            pickle_key="encryption_key_for_etke",
+            store_name="temp_store.db"
         )
 
-        # Créer le client sans le store (matrix-nio ne supporte pas store en argument)
-        # Pour PostgreSQL, utiliser store_path à la place
+        # Créer le client avec SQLite temporaire
         self.client = AsyncClient(
             homeserver=self.homeserver,
             user=self.username,
             device_id=self.device_id,
+            store_path=str(store_path),
             config=config
-            # Note: PostgreSQL store devra être configuré différemment
         )
 
-        logger.info("PostgreSQL store configured successfully")
+        logger.info("PostgreSQL store configured with temp SQLite for nio compatibility")
 
     async def _connect_with_sqlite(self):
         """Connexion avec store SQLite (fallback)"""
-        store_path = Path("matrix_store")
-        store_path.mkdir(exist_ok=True)
+        # Utiliser un répertoire persistant sur Clever Cloud
+        # /app/data est persistant sur Clever Cloud avec FS Bucket
+        store_path = Path(os.environ.get("MATRIX_STORE_PATH", "/app/data/matrix_store"))
+        store_path.mkdir(parents=True, exist_ok=True)
 
         config = AsyncClientConfig(
             store_sync_tokens=True,
